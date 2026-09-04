@@ -2,6 +2,10 @@
 
 PR1 agents feed pulse only (no Solana auditor/narrative). Components are
 liquidity quality, 24h volume, pulse, and a small Stock-Token prior.
+
+PR3: when ``allowlist is None`` (e.g. ``RhDiscovery.scoring_allowlist()`` in
+``pool_scan`` / ``both`` mode), the require_allowlist check is skipped even if
+``filter.require_allowlist`` is True. Pass an explicit iterable to enforce.
 """
 
 from __future__ import annotations
@@ -23,20 +27,6 @@ def _norm_addr(value: str) -> str:
     return (value or "").strip().lower()
 
 
-def _allowlist_set(
-    allowlist: Iterable[str] | None,
-    asset: RhAsset,
-) -> set[str]:
-    if allowlist is not None:
-        return {_norm_addr(a) for a in allowlist if a}
-    raw = asset.raw or {}
-    for key in ("allowlist_addresses", "watchlist_addresses"):
-        found = raw.get(key)
-        if found:
-            return {_norm_addr(str(a)) for a in found if a}
-    return set()
-
-
 def hard_veto_rh(
     asset: RhAsset,
     pulse: dict[str, Any],
@@ -45,14 +35,18 @@ def hard_veto_rh(
     *,
     allowlist: Iterable[str] | None = None,
 ) -> str | None:
-    """Return a stable veto slug, or None if the asset may be scored."""
+    """Return a stable veto slug, or None if the asset may be scored.
+
+    ``allowlist is None`` → skip allowlist enforcement (pool_scan / both).
+    ``allowlist`` iterable → address must be in the set when require_allowlist.
+    """
     cfg = filter_cfg or {}
     require_allowlist = bool(cfg.get("require_allowlist", True))
     min_price = float(cfg.get("min_price_usd", 0.01))
     min_liq = float(cfg.get("min_liquidity_usd", 50_000.0))
 
-    if require_allowlist:
-        allowed = _allowlist_set(allowlist, asset)
+    if require_allowlist and allowlist is not None:
+        allowed = {_norm_addr(a) for a in allowlist if a}
         if not allowed or _norm_addr(asset.address) not in allowed:
             return "not_on_allowlist"
 
@@ -95,7 +89,12 @@ def score_rh_asset(
     *,
     allowlist: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Weighted score plus buy/skip verdict — same shape as ``score_token``."""
+    """Weighted score plus buy/skip verdict — same shape as ``score_token``.
+
+    Pass ``allowlist=None`` (default) to skip the allowlist veto — required for
+    pool_scan discoveries. Pass ``allowlist=discovery.scoring_allowlist()`` from
+    the desk so watchlist mode still enforces.
+    """
     cfg = filter_cfg or {}
     w = {**DEFAULT_WEIGHTS, **(weights or {})}
     min_liq = float(cfg.get("min_liquidity_usd", 50_000.0))

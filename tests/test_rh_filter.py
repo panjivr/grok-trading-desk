@@ -1,4 +1,4 @@
-"""Hard-veto / scoring tests for score_rh_asset."""
+"""Hard-veto / scoring tests for score_rh_asset (PR3 allowlist=None)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _asset(**kwargs) -> RhAsset:
         volume_24h_usd=80_000.0,
         is_stock_token=True,
         underlying="AAPL",
-        raw={"allowlist_addresses": list(ALLOW)},
+        raw={},
     )
     base.update(kwargs)
     return RhAsset(**base)
@@ -39,11 +39,22 @@ def test_allowlist_miss_vetoes():
     assert out["reason"] == "not_on_allowlist"
 
 
-def test_allowlist_from_asset_raw():
+def test_allowlist_hit_passes():
     asset = _asset()
-    # No allowlist kwarg — must read asset.raw
-    veto = hard_veto_rh(asset, {"go_signal": 0.9}, FILTER)
+    veto = hard_veto_rh(asset, {"go_signal": 0.9}, FILTER, allowlist=ALLOW)
     assert veto is None
+
+
+def test_allowlist_none_skips_veto():
+    """PR3: allowlist=None skips require_allowlist even when filter says True."""
+    asset = _asset(address="0xnotlisted", raw={})
+    veto = hard_veto_rh(asset, {"go_signal": 0.9}, FILTER, allowlist=None)
+    assert veto is None
+    out = score_rh_asset(
+        asset, {"go_signal": 0.9}, filter_cfg=FILTER, allowlist=None
+    )
+    assert out["vetoed"] is False
+    assert out["buy"] is True
 
 
 def test_zero_price_vetoes():
@@ -100,7 +111,6 @@ def test_passing_asset_has_score_shape():
     assert "components" in out
     assert out["vetoed"] is False
     assert set(out["components"]) >= {"liquidity", "volume", "pulse", "stock_token"}
-    # Strong liquidity + pulse should clear the default threshold.
     assert out["buy"] is True
     assert out["reason"] == "above_threshold"
 
@@ -108,5 +118,5 @@ def test_passing_asset_has_score_shape():
 def test_require_allowlist_false_skips_check():
     asset = _asset(address="0xnotlisted", raw={})
     cfg = {**FILTER, "require_allowlist": False}
-    veto = hard_veto_rh(asset, {"go_signal": 0.9}, cfg)
+    veto = hard_veto_rh(asset, {"go_signal": 0.9}, cfg, allowlist=ALLOW)
     assert veto is None

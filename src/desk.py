@@ -1,4 +1,4 @@
-"""Grok Trading Desk — the orchestrator.
+"""Grok Trading Desk â€” the orchestrator.
 
 Four concurrent asyncio loops, one shared risk manager, one event log:
 
@@ -82,7 +82,7 @@ class TradingDesk:
         def agent(cls):
             return cls(config, costs=self.costs)
 
-        # crypto side — backend switch (default: solana / pump.fun)
+        # crypto side â€” backend switch (default: solana / pump.fun)
         self.scout = Scout(config)
         self.auditor = agent(Auditor)
         self.narrative = agent(Narrative)
@@ -269,7 +269,7 @@ class TradingDesk:
         """Pulse + RH hard-veto scoring + adversarial check -> buy or skip."""
         pulse = await self.crypto_pulse.run()
         allowlist = (
-            self.rh_discovery.watchlist_addresses()
+            self.rh_discovery.scoring_allowlist()
             if self.rh_discovery is not None
             else set()
         )
@@ -402,7 +402,7 @@ class TradingDesk:
             try:
                 self.risk.maybe_reset_day()
                 if self.rh_discovery is None:
-                    log.warning("rh_loop running but rh_discovery is None — sleeping")
+                    log.warning("rh_loop running but rh_discovery is None â€” sleeping")
                     await asyncio.sleep(interval)
                     continue
                 assets = await self.rh_discovery.run()
@@ -693,7 +693,7 @@ class TradingDesk:
 
     async def run(self) -> None:
         log.info(
-            "desk starting — dry_run=%s, crypto_backend=%s, stock execution=%s, "
+            "desk starting â€” dry_run=%s, crypto_backend=%s, stock execution=%s, "
             "models=%s/%s, live_search=%s",
             self.dry_run,
             self.crypto_backend,

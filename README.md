@@ -400,3 +400,52 @@ Stock Tokens provide economic exposure and are **not** the same as legal share
 ownership; availability is jurisdiction-dependent. Keep `paper: true` until you
 have reviewed the signing path yourself.
 
+
+
+# Robinhood Chain — pool-scan discovery (PR3)
+
+Extends PR1 `RhDiscovery` with DexScreener pool scanning. **Does not depend on PR2** (live executor).
+
+## Modes (`robinhood_chain.discovery.mode`)
+
+| Mode | Source |
+|------|--------|
+| `watchlist` (default) | Curated YAML entries (PR1, offline-friendly) |
+| `pool_scan` | DexScreener pools around seed tokens |
+| `both` | Watchlist ∪ pool_scan, deduped by address (watchlist wins) |
+
+## DexScreener (no API key)
+
+- Chain slug: **`robinhood`** (string — not `4663`)
+- Base: `https://api.dexscreener.com`
+- `GET /token-pairs/v1/robinhood/{tokenAddress}` — pools for each seed
+- Optional `GET /latest/dex/search?q=…` filtered to `chainId === "robinhood"`
+
+### Default seeds (official only)
+
+- USDG / `quote_token`: `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`
+- WETH: `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73`
+- Excluded impostor USDG: `0x8218d73C00567A01481495Ad6c5143e00D5BB5b4`
+
+Each pair maps to an `RhAsset` on the **non-seed** side (or `baseToken` if neither side is a seed). `raw` includes `pair_address`, `dex_id`, `pool_scan: true`.
+
+## Scoring / allowlist
+
+For `pool_scan` / `both`, the desk should **not** block discoveries with the watchlist allowlist:
+
+```python
+allowlist = self.rh_discovery.scoring_allowlist()  # None for pool_scan/both
+verdict = score_rh_asset(..., allowlist=allowlist)
+```
+
+When `allowlist is None`, `score_rh_asset` skips the require_allowlist veto.
+See `desk_pool_scan_patch.md`.
+
+## Soft-fail
+
+Network / client errors log a warning and return `[]` (or watchlist-only in `both`).
+
+## New module
+
+`src/crypto/rh_chain/dexscreener.py` — `DexScreenerClient(http_get=..., chain_slug="robinhood")` with injectable `http_get` for offline tests (default: urllib via `asyncio.to_thread` from discovery).
+

@@ -155,6 +155,8 @@ crypto:
   backend: "solana"   # solana | robinhood_chain
 
 robinhood_chain:
+  weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+  quote_token: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
   chain_id: 4663                                          # 46630 = testnet
   rpc_url: "https://rpc.mainnet.chain.robinhood.com"      # rate-limited; prefer Alchemy in prod
   wallet_key: "REPLACE_ME"                                # never commit a real key
@@ -162,7 +164,14 @@ robinhood_chain:
   router: ""                                              # Uniswap / Universal Router placeholder
   max_slippage_bps: 50
   discovery:
-    mode: "watchlist"                                     # watchlist | (later) pool_scan
+    mode: "watchlist"   # watchlist | pool_scan | both
+    pool_scan:
+      seeds: []
+      search_queries: []
+      min_liquidity_usd: null
+      max_results: 50
+      exclude_addresses:
+        - "0x8218d73C00567A01481495Ad6c5143e00D5BB5b4"
     poll_seconds: 60
     watchlist: []
     # example entry (replace with a real RH Chain token address before live use):

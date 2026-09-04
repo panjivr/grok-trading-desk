@@ -1,4 +1,4 @@
-"""Offline discovery tests — watchlist only, no network."""
+"""Offline discovery tests — watchlist path still intact (PR1 + PR3)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,16 @@ import pytest
 from src.crypto.rh_chain import RhAsset, RhDiscovery
 
 
-def _cfg(watchlist: list[dict] | None = None) -> dict:
+def _cfg(watchlist: list[dict] | None = None, mode: str = "watchlist") -> dict:
     return {
         "crypto": {"backend": "robinhood_chain"},
         "robinhood_chain": {
             "chain_id": 4663,
             "rpc_url": "http://127.0.0.1:9",  # must never be contacted
+            "quote_token": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+            "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
             "discovery": {
-                "mode": "watchlist",
+                "mode": mode,
                 "watchlist": watchlist or [],
             },
         },
@@ -95,3 +97,20 @@ def test_watchlist_addresses_normalized():
     )
     addrs = disc.watchlist_addresses()
     assert addrs == {"0xaa", "0xbb"}
+
+
+def test_scoring_allowlist_watchlist_mode():
+    disc = RhDiscovery(
+        _cfg([{"address": "0xAA", "symbol": "A"}], mode="watchlist")
+    )
+    assert disc.scoring_allowlist() == {"0xaa"}
+
+
+def test_scoring_allowlist_pool_scan_is_none():
+    disc = RhDiscovery(_cfg([], mode="pool_scan"))
+    assert disc.scoring_allowlist() is None
+
+
+def test_scoring_allowlist_both_is_none():
+    disc = RhDiscovery(_cfg([{"address": "0xAA"}], mode="both"))
+    assert disc.scoring_allowlist() is None

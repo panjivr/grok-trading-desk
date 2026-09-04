@@ -333,3 +333,70 @@ paper long enough to see how it actually behaves before you consider anything el
 Understand every line before you point it at real money — especially the executor
 you have to write yourself. You are responsible for your own losses, and for
 whatever your jurisdiction has to say about automated trading.
+
+
+## Robinhood Chain backend
+
+`grok-trading-desk` can target **Robinhood Chain** (EVM L2, Stock Tokens) as an
+alternative crypto backend. The Solana / pump.fun path remains the default.
+
+### Enable
+
+In `config.yaml`:
+
+```yaml
+crypto:
+  backend: "robinhood_chain"   # default is "solana"
+
+robinhood_chain:
+  chain_id: 4663
+  rpc_url: "https://rpc.mainnet.chain.robinhood.com"
+  wallet_key: "REPLACE_ME"
+  paper: true
+  discovery:
+    mode: "watchlist"
+    watchlist:
+      - address: "0xYOUR_STOCK_TOKEN"
+        symbol: "AAPL"
+        underlying: "AAPL"
+        is_stock_token: true
+        price_usd: 190.0
+        liquidity_usd: 250000
+        volume_24h_usd: 80000
+  filter:
+    min_liquidity_usd: 50000
+    require_allowlist: true
+    min_price_usd: 0.01
+```
+
+Then run as usual (`python -m src.desk --config config.yaml --dry-run`).
+
+### What PR1 does
+
+| Piece | Behavior |
+|---|---|
+| Discovery | Config **watchlist** only (no PumpPortal, no pool scan) |
+| Scoring | Code hard vetoes: allowlist, price/oracle, liquidity, pulse |
+| Evaluate path | `crypto_pulse` + `score_rh_asset` + `crypto_checker` (skips Solana auditor/narrative) |
+| Executor | **Paper** synthetic fills; live raises `NotImplementedError` |
+| Market book | Still `Market.CRYPTO` — positions carry `meta.backend = "robinhood_chain"` |
+
+### Network
+
+- Mainnet chain id **4663**, testnet **46630**, gas token ETH
+- Public RPC is rate-limited; Alchemy is recommended for production
+- Docs: https://docs.robinhood.com/chain/
+
+### Still stubbed / out of scope
+
+- Live Uniswap / router signing (owner wires keys — never logged)
+- Subgraph / pool-scan discovery
+- `Market.RWA` + separate allocator slice
+- Dashboard RH-specific UI
+
+### Disclaimer
+
+Stock Tokens provide economic exposure and are **not** the same as legal share
+ownership; availability is jurisdiction-dependent. Keep `paper: true` until you
+have reviewed the signing path yourself.
+

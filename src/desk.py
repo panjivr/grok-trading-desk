@@ -98,7 +98,7 @@ class TradingDesk:
         )
         if is_robinhood_chain(config):
             self.rh_discovery = RhDiscovery(config)
-            self.crypto_executor = RhExecutor(config)
+            self.crypto_executor = RhExecutor(config, live_ack=live_ack)
 
         # stock side
         self.screener = Screener(config)

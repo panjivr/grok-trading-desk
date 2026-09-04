@@ -400,3 +400,91 @@ Stock Tokens provide economic exposure and are **not** the same as legal share
 ownership; availability is jurisdiction-dependent. Keep `paper: true` until you
 have reviewed the signing path yourself.
 
+
+
+## Robinhood Chain — live Uniswap signing (PR2)
+
+PR1 shipped watchlist discovery + **paper** fills. PR2 adds a gated live path
+that signs Uniswap V3 `SwapRouter02.exactInputSingle` swaps on Robinhood Chain
+(chain id **4663**).
+
+### Safety gates (mirror StockExecutor)
+
+Live swaps run only when **all** of these are true:
+
+1. `mode: "live"` in config
+2. CLI flag `--i-understand-the-risk` (`live_ack=True` into `RhExecutor`)
+3. `robinhood_chain.paper: false`
+
+Anything else → paper synthetic fills. A live config without the CLI flag logs a
+warning and stays on paper.
+
+**Never** commit a real `wallet_key`. Never log private-key material.
+
+### Contracts (official defaults)
+
+| Name | Address |
+|---|---|
+| SwapRouter02 | `0xcaf681a66d020601342297493863e78c959e5cb2` |
+| UniversalRouter | `0x8876789976decbfcbbbe364623c63652db8c0904` |
+| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
+| QuoterV2 | `0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7` |
+| WETH (18 decimals) | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+| USDG / Global Dollar (6 decimals) | `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` |
+
+Source: https://docs.robinhood.com/chain/contracts/
+
+**Default `quote_token` for stock-token buys: USDG** (not the impostor `0x8218…`).
+
+### Config
+
+```yaml
+mode: live   # still need --i-understand-the-risk and paper: false
+
+robinhood_chain:
+  paper: false
+  rpc_url: "https://YOUR_ALCHEMY_OR_RH_RPC"
+  wallet_key: "REPLACE_ME"   # owner-held; never commit
+  router: "0xcaf681a66d020601342297493863e78c959e5cb2"
+  weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+  quote_token: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+  pool_fee: 3000
+  deadline_seconds: 120
+  max_slippage_bps: 50
+```
+
+### Desk wiring
+
+```python
+self.crypto_executor = RhExecutor(config, live_ack=live_ack)
+```
+
+### Behavior
+
+| Method | Paper | Live |
+|---|---|---|
+| `buy` | Synthetic fill + local book | Swap `quote_token` → token via SwapRouter02 |
+| `sell` / `close` | Local book | Swap token → `quote_token` for fraction of ERC-20 balance |
+| `tighten_stop` | Local book | Desk-side only (no on-chain stop) |
+| `get_positions` | Local book | `[]` — desk tracks positions |
+
+Injectable `tx_backend` (method `swap_exact_in(...)`) keeps unit tests offline
+without `web3`. Production default: `UniswapV3SwapBackend` (lazy `web3` /
+`eth_account`).
+
+Failures raise `SwapError` with stable slugs: `insufficient_gas`, `rpc_error`,
+`swap_reverted`, `swap_failed`.
+
+### Dependencies for live
+
+```bash
+pip install web3 eth-account
+```
+
+Paper / discovery / scoring still run without them.
+
+### Disclaimer
+
+Stock Tokens are economic exposure, not share ownership. Live mode moves real
+funds — paper-first, review pool fee / slippage / quote token before enabling.
+

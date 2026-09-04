@@ -49,14 +49,16 @@ def build_rh_discovery(config: dict[str, Any]):
     return RhDiscovery(config)
 
 
-def build_rh_executor(config: dict[str, Any]):
-    """Construct the RH paper / stub executor."""
+def build_rh_executor(config: dict[str, Any], live_ack: bool = False):
+    """Construct the RH paper / live Uniswap executor."""
     from .rh_chain.rh_executor import RhExecutor
 
-    return RhExecutor(config)
+    return RhExecutor(config, live_ack=live_ack)
 
 
-def build_crypto_stack(config: dict[str, Any]) -> dict[str, Any]:
+def build_crypto_stack(
+    config: dict[str, Any], live_ack: bool = False
+) -> dict[str, Any]:
     """Factory used by desk wiring.
 
     Returns a dict with ``backend`` plus either Solana-oriented placeholders
@@ -68,7 +70,7 @@ def build_crypto_stack(config: dict[str, Any]) -> dict[str, Any]:
         return {
             "backend": backend,
             "discovery": build_rh_discovery(config),
-            "executor": build_rh_executor(config),
+            "executor": build_rh_executor(config, live_ack=live_ack),
             "scout": None,
         }
     return {

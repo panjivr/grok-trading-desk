@@ -1,4 +1,9 @@
-"""Paper executor tests — no network, no keys logged."""
+"""Paper executor tests — no network, no keys logged.
+
+Adapted for PR2 ctor ``RhExecutor(config, live_ack=False)``; paper path
+unchanged. Live NotImplementedError stubs are retired — see
+``test_rh_executor_live.py``.
+"""
 
 from __future__ import annotations
 
@@ -71,26 +76,12 @@ async def test_tighten_stop_updates_paper_book():
 
 
 @pytest.mark.asyncio
-async def test_live_raises_not_implemented():
-    ex = RhExecutor(_cfg(paper=False))
-    # Force live even if mode says paper
-    ex.paper = False
-    with pytest.raises(NotImplementedError) as ei:
-        await ex.buy("0x1", 10.0)
-    msg = str(ei.value).lower()
-    assert "uniswap" in msg or "not implemented" in msg
-    assert "wallet_key" not in msg  # message must not embed secrets
-
-
-@pytest.mark.asyncio
-async def test_live_sell_close_tighten_also_stubbed():
-    ex = RhExecutor(_cfg(False))
-    ex.paper = False
-    for coro in (
-        ex.sell("0x1", 1.0),
-        ex.close_position("0x1"),
-        ex.tighten_stop("0x1", 1.0),
-        ex.get_positions(),
-    ):
-        with pytest.raises(NotImplementedError):
-            await coro
+async def test_ctor_defaults_to_paper_without_live_ack():
+    """mode live + rh.paper false still stays paper without live_ack."""
+    cfg = _cfg(paper=False)
+    cfg["mode"] = "live"
+    cfg["robinhood_chain"]["paper"] = False
+    ex = RhExecutor(cfg, live_ack=False)
+    assert ex.paper is True
+    fill = await ex.buy("0x1", 10.0, price=2.0)
+    assert fill["paper"] is True

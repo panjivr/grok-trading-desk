@@ -159,8 +159,15 @@ robinhood_chain:
   rpc_url: "https://rpc.mainnet.chain.robinhood.com"      # rate-limited; prefer Alchemy in prod
   wallet_key: "REPLACE_ME"                                # never commit a real key
   paper: true
-  router: ""                                              # Uniswap / Universal Router placeholder
+  router: "0xcaf681a66d020601342297493863e78c959e5cb2"    # SwapRouter02
   max_slippage_bps: 50
+  quoter_v2: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"
+  universal_router: "0x8876789976decbfcbbbe364623c63652db8c0904"
+  permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+  weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"      # 18 decimals
+  deadline_seconds: 120
+  quote_token: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"  # USDG Global Dollar (6 decimals) — NOT 0x8218...
+  pool_fee: 3000                                          # Uniswap v3 fee tier
   discovery:
     mode: "watchlist"                                     # watchlist | (later) pool_scan
     poll_seconds: 60

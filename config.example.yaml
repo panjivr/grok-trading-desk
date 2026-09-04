@@ -145,3 +145,47 @@ logging:
   path: "logs/desk.jsonl"
   echo_stdout: true
   cost_report_every: 25   # log a spend snapshot every N model calls
+
+# ---------------------------------------------------------------------------
+# Append to config.example.yaml (and your local config.yaml).
+# Keep existing solana: / pump_fun: sections intact.
+# ---------------------------------------------------------------------------
+
+crypto:
+  backend: "solana"   # solana | robinhood_chain
+
+robinhood_chain:
+  chain_id: 4663                                          # 46630 = testnet
+  rpc_url: "https://rpc.mainnet.chain.robinhood.com"      # rate-limited; prefer Alchemy in prod
+  wallet_key: "REPLACE_ME"                                # never commit a real key
+  paper: true
+  router: ""                                              # Uniswap / Universal Router placeholder
+  max_slippage_bps: 50
+  discovery:
+    mode: "watchlist"                                     # watchlist | (later) pool_scan
+    poll_seconds: 60
+    watchlist: []
+    # example entry (replace with a real RH Chain token address before live use):
+    # - address: "0xYOUR_STOCK_TOKEN"
+    #   symbol: "AAPL"
+    #   name: "Apple Stock Token"
+    #   underlying: "AAPL"
+    #   is_stock_token: true
+    #   decimals: 18
+    #   price_usd: 190.0
+    #   liquidity_usd: 250000
+    #   volume_24h_usd: 80000
+  filter:
+    min_liquidity_usd: 50000
+    require_allowlist: true
+    min_price_usd: 0.01
+
+# Optional: dedicated weights (falls back to scoring_weights.crypto if omitted)
+# scoring_weights:
+#   robinhood_chain:
+#     liquidity: 0.35
+#     volume: 0.25
+#     pulse: 0.25
+#     stock_token: 0.15
+#     min_score_to_buy: 0.62
+

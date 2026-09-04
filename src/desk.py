@@ -25,6 +25,12 @@ from .base_agent import CostTracker
 from .crypto.auditor import Auditor
 from .crypto.crypto_checker import CryptoChecker
 from .crypto.crypto_executor import CryptoExecutor
+from .crypto.backends import (
+    BACKEND_ROBINHOOD_CHAIN,
+    get_crypto_backend,
+    is_robinhood_chain,
+)
+from .crypto.rh_chain import RhAsset, RhDiscovery, RhExecutor, score_rh_asset
 from .crypto.crypto_pulse import CryptoPulse
 from .crypto.crypto_scoring import score_token
 from .crypto.narrative import Narrative
@@ -76,13 +82,23 @@ class TradingDesk:
         def agent(cls):
             return cls(config, costs=self.costs)
 
-        # crypto side
+        # crypto side — backend switch (default: solana / pump.fun)
         self.scout = Scout(config)
         self.auditor = agent(Auditor)
         self.narrative = agent(Narrative)
         self.crypto_pulse = agent(CryptoPulse)
         self.crypto_checker = agent(CryptoChecker)
         self.crypto_executor = CryptoExecutor(config)
+        self.crypto_backend = get_crypto_backend(config)
+        self.rh_discovery = None
+        self.rh_cfg = (config.get("robinhood_chain") or {})
+        self.rh_filter = (self.rh_cfg.get("filter") or {})
+        self.rh_poll_seconds = float(
+            (self.rh_cfg.get("discovery") or {}).get("poll_seconds", 60.0)
+        )
+        if is_robinhood_chain(config):
+            self.rh_discovery = RhDiscovery(config)
+            self.crypto_executor = RhExecutor(config)
 
         # stock side
         self.screener = Screener(config)
@@ -248,6 +264,158 @@ class TradingDesk:
                 log.exception("crypto loop error, restarting in 10s")
                 await asyncio.sleep(10)
 
+
+    async def evaluate_rh_asset(self, asset: RhAsset) -> dict[str, Any]:
+        """Pulse + RH hard-veto scoring + adversarial check -> buy or skip."""
+        pulse = await self.crypto_pulse.run()
+        allowlist = (
+            self.rh_discovery.watchlist_addresses()
+            if self.rh_discovery is not None
+            else set()
+        )
+        verdict = score_rh_asset(
+            asset,
+            pulse,
+            filter_cfg=self.rh_filter,
+            weights=(self.weights.get("robinhood_chain") or self.weights.get("crypto")),
+            min_go_signal=self.min_go_signal,
+            allowlist=allowlist,
+        )
+        agent_scores = {
+            "pulse": pulse,
+            "matrix": verdict,
+            "citations": [],
+        }
+        self.maybe_report_costs()
+
+        label = asset.symbol or asset.address
+        if not verdict["buy"]:
+            self.log.skip(
+                Market.CRYPTO.value,
+                label,
+                verdict["reason"],
+                {"score": verdict["score"], "backend": "robinhood_chain"},
+            )
+            return {"bought": False, "reason": verdict["reason"]}
+
+        check = await self.crypto_checker.run(
+            {
+                "token": asset.model_dump(mode="json"),
+                "asset": asset.model_dump(mode="json"),
+                "audit": {},
+                "narrative": {},
+                "pulse": pulse,
+                "score": verdict,
+                "backend": "robinhood_chain",
+            }
+        )
+        agent_scores["checker"] = check
+        agent_scores["citations"] += self.crypto_checker.last_citations
+        self.maybe_report_costs()
+        if not check["approve"]:
+            self.log.skip(
+                Market.CRYPTO.value,
+                label,
+                "checker_rejected",
+                {"kill_reasons": check["kill_reasons"], "backend": "robinhood_chain"},
+            )
+            return {"bought": False, "reason": "checker_rejected"}
+
+        return await self._open_rh_asset(asset, verdict, check, agent_scores)
+
+    async def _open_rh_asset(self, asset: RhAsset, verdict, check, agent_scores) -> dict[str, Any]:
+        async with self._lock:
+            allowed, reason = self.risk.can_open(Market.CRYPTO, self.positions)
+            label = asset.symbol or asset.address
+            if not allowed:
+                self.log.skip(Market.CRYPTO.value, label, reason)
+                return {"bought": False, "reason": reason}
+
+            amount = self.risk.position_size(
+                Market.CRYPTO,
+                score=check.get("adjusted_score") or verdict["score"],
+            )
+            if amount <= 0:
+                self.log.skip(Market.CRYPTO.value, label, "size_zero")
+                return {"bought": False, "reason": "size_zero"}
+
+            if self.dry_run:
+                self.log.buy(
+                    Market.CRYPTO.value,
+                    label,
+                    verdict["score"],
+                    agent_scores,
+                    amount,
+                    tx_id="DRY_RUN",
+                )
+                return {"bought": True, "dry_run": True, "amount": amount}
+
+            try:
+                fill = await self.crypto_executor.buy(
+                    asset.address,
+                    amount,
+                    price=asset.price_usd,
+                    symbol=asset.symbol or asset.address,
+                )
+            except NotImplementedError as exc:
+                self.log.skip(
+                    Market.CRYPTO.value,
+                    label,
+                    "executor_not_implemented",
+                    str(exc),
+                )
+                return {"bought": False, "reason": "executor_not_implemented"}
+
+            self.risk.record_fill(Market.CRYPTO, amount)
+            tx_hash = str(fill.get("tx_id", ""))
+            self.positions.append(
+                Position(
+                    market=Market.CRYPTO,
+                    symbol=asset.symbol or asset.address,
+                    quantity=float(fill.get("quantity", 0)),
+                    entry_price=float(fill.get("price", 0) or asset.price_usd or 0),
+                    current_price=float(fill.get("price", 0) or asset.price_usd or 0),
+                    amount_usd=amount,
+                    score=verdict["score"],
+                    meta={
+                        "address": asset.address,
+                        "tx_hash": tx_hash,
+                        "backend": "robinhood_chain",
+                    },
+                )
+            )
+            self.log.buy(
+                Market.CRYPTO.value,
+                label,
+                verdict["score"],
+                agent_scores,
+                amount,
+                tx_id=tx_hash,
+            )
+            return {"bought": True, "amount": amount, "tx_id": tx_hash}
+
+    async def rh_loop(self, poll_seconds: float | None = None) -> None:
+        """Poll watchlist discovery (no pump.fun WebSocket)."""
+        interval = float(poll_seconds if poll_seconds is not None else self.rh_poll_seconds)
+        log.info("crypto loop: robinhood_chain watchlist (every %.1fs)", interval)
+        while True:
+            try:
+                self.risk.maybe_reset_day()
+                if self.rh_discovery is None:
+                    log.warning("rh_loop running but rh_discovery is None — sleeping")
+                    await asyncio.sleep(interval)
+                    continue
+                assets = await self.rh_discovery.run()
+                for asset in assets:
+                    await self.evaluate_rh_asset(asset)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("rh loop error, restarting in 10s")
+                await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(interval)
+
     # -- stock loop -----------------------------------------------------------------
 
     async def evaluate_stock(self, stock, pulse: dict[str, Any]) -> dict[str, Any]:
@@ -408,13 +576,19 @@ class TradingDesk:
         executor = (
             self.crypto_executor if position.market == Market.CRYPTO else self.stock_executor
         )
+        # RH positions store address; Solana stores mint.
+        crypto_id = (
+            position.meta.get("address")
+            or position.meta.get("mint")
+            or position.symbol
+        )
         try:
             if action == "TIGHTEN":
                 new_stop = position.current_price * (1 - decision["new_stop_pct"])
                 if position.market == Market.STOCKS:
                     await executor.tighten_stop(position.meta.get("order_id", ""), new_stop)
                 else:
-                    await executor.tighten_stop(position.meta.get("mint", ""), new_stop)
+                    await executor.tighten_stop(crypto_id, new_stop)
                 position.stop_price = new_stop
 
             elif action == "TRIM":
@@ -422,7 +596,7 @@ class TradingDesk:
                 if position.market == Market.STOCKS:
                     await executor.sell_partial(position.symbol, position.quantity * fraction)
                 else:
-                    await executor.sell(position.meta.get("mint", ""), fraction)
+                    await executor.sell(crypto_id, fraction)
                 position.quantity *= 1 - fraction
                 position.amount_usd *= 1 - fraction
 
@@ -430,7 +604,7 @@ class TradingDesk:
                 target = (
                     position.symbol
                     if position.market == Market.STOCKS
-                    else position.meta.get("mint", "")
+                    else crypto_id
                 )
                 await executor.close_position(target)
                 self.risk.record_close(position.market, position.pnl_usd, position.amount_usd)
@@ -519,16 +693,23 @@ class TradingDesk:
 
     async def run(self) -> None:
         log.info(
-            "desk starting — dry_run=%s, stock execution=%s, models=%s/%s, live_search=%s",
+            "desk starting — dry_run=%s, crypto_backend=%s, stock execution=%s, "
+            "models=%s/%s, live_search=%s",
             self.dry_run,
+            self.crypto_backend,
             "paper" if self.stock_executor.paper else "LIVE",
             self.analyst.model,
             self.stock_checker.model,
             self.analyst.live_search,
         )
         log.info("outcome memory: %d closed trades loaded", self.refresh_memory())
+        crypto_task = (
+            self.rh_loop()
+            if self.crypto_backend == BACKEND_ROBINHOOD_CHAIN
+            else self.crypto_loop()
+        )
         await asyncio.gather(
-            self.crypto_loop(),
+            crypto_task,
             self.stock_loop(),
             self.exit_loop(),
             self.allocator_loop(),
